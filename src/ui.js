@@ -4,7 +4,7 @@ import presetTailwind from 'https://esm.sh/@twind/preset-tailwind@1';
 import { html, render, useState, useEffect, useRef, useCallback }
   from 'https://unpkg.com/htm/preact/standalone.module.js?module';
 
-import { store, noteNames } from './state.js';
+import { store, noteNames, savableStateKeys } from './state.js';
 import './audio.js';
 
 // Install Twind before rendering
@@ -70,7 +70,10 @@ const ControlSlider = ({ label, value, min=0, max=1, step=0.01, onInput, display
 // 楽器パラメータ用の縦型コンパクトスライダー
 const VolumeSlider = ({ label, value, onInput, min=0, max=1, step=0.01 }) => html`
   <div class="flex flex-col items-start w-full gap-1">
-    <label class="text-xs text-gray-400 truncate">${label}</label>
+    <div class="flex justify-between w-full">
+      <label class="text-xs text-gray-400 truncate">${label}</label>
+      <span class="text-xs text-gray-400">${value.toFixed(2)}</span>
+    </div>
     <input
       type="range"
       min=${min} max=${max} step=${step}
@@ -82,7 +85,7 @@ const VolumeSlider = ({ label, value, onInput, min=0, max=1, step=0.01 }) => htm
 `;
 
 const Step = ({ on, isCurrent, index }) => {
-  const baseClasses = "cursor-pointer h-5 rounded";
+  const baseClasses = "cursor-pointer h-5 rounded w-full";
   const onClass = on ? "bg-indigo-400" : "bg-gray-700";
   const currentClass = isCurrent ? "ring-2 ring-offset-2 ring-offset-gray-900 ring-yellow-400" : "";
   const measureMarkerClass = (index % 4 === 0) ? "border-l-2 border-gray-500" : ""; // Add a left border for measure markers
@@ -105,12 +108,32 @@ const StepGrid = ({ track }) => {
             const s = store.getState();
             setSteps(s.patterns[s.activePatternIndex].stepsByTrack[track] ?? []);
         };
+
         const unsubPatterns = store.subscribe((s, p) => {
-            if (s.activePatternIndex !== p.activePatternIndex || 
-                s.patterns[s.activePatternIndex]?.stepsByTrack[track] !== p.patterns[p.activePatternIndex]?.stepsByTrack[track]) {
+            const instrument = track.split('_')[0].toLowerCase();
+            const currentPattern = s.patterns[s.activePatternIndex];
+            const prevPattern = p.patterns[p.activePatternIndex];
+
+            let changed = false;
+            if (s.activePatternIndex !== p.activePatternIndex) {
+                changed = true;
+            } else if (currentPattern && prevPattern) {
+                if (currentPattern.stepsByTrack[track] !== prevPattern.stepsByTrack[track]) {
+                    changed = true;
+                }
+                if (!track.startsWith('DRUM_')) {
+                    const lengthProp = `${instrument}GlobalLength`;
+                    if (currentPattern[lengthProp] !== prevPattern[lengthProp]) {
+                        changed = true;
+                    }
+                }
+            }
+
+            if (changed) {
                 updateSteps();
             }
         });
+
         const unsubPlayhead = store.subscribe((s, p) => {
             if (s.isPlaying !== p.isPlaying || s.playheadPosition !== p.playheadPosition) {
                 if (!s.isPlaying) {
@@ -174,18 +197,56 @@ const StepGrid = ({ track }) => {
         window.addEventListener('pointerup', handlePointerUp);
     };
 
+    const timeToSteps = (time) => {
+        if (typeof time !== 'string') return 1;
+        const match = time.match(/^(\d+)([ntm])$/);
+        if (!match) return 1;
+        const [_, valStr, unit] = match;
+        const val = parseInt(valStr, 10);
+        if (unit === 'n') {
+            return 16 / val;
+        }
+        return 1;
+    };
+
+    const renderedSteps = [];
+    for (let i = 0; i < 16; ) {
+        const isDrum = track.startsWith('DRUM_');
+        const stepState = steps[i] ?? 0;
+        const on = isDrum ? stepState > 0 : (stepState && stepState.on);
+
+        if (on) {
+            let lengthInSteps = 1;
+            if (!isDrum) {
+                const instrument = track.split('_')[0].toLowerCase();
+                const s = store.getState();
+                const lengthValue = s.patterns[s.activePatternIndex][`${instrument}GlobalLength`][i];
+                lengthInSteps = Math.round(lengthValue * 16);
+                lengthInSteps = Math.max(1, lengthInSteps);
+                lengthInSteps = Math.min(lengthInSteps, 16 - i);
+            }
+            
+            const isCurrent = i <= currentStep && currentStep < i + lengthInSteps;
+
+            renderedSteps.push(html`
+                <div style=${{ gridColumn: `span ${lengthInSteps}` }} key=${i}>
+                    <${Step} on=${on} isCurrent=${isCurrent} index=${i} />
+                </div>
+            `);
+            i += lengthInSteps;
+        } else {
+            renderedSteps.push(html`<${Step} key=${i} on=${false} isCurrent=${currentStep === i} index=${i} />`);
+            i++;
+        }
+    }
+
     return html`
         <div
             ref=${gridRef}
             class="grid grid-cols-16 gap-0.5 touch-none"
             onPointerDown=${handlePointerDown}
         >
-            ${Array(16).fill(0).map((_, i) => {
-                const isDrum = track.startsWith('DRUM_');
-                const stepState = steps[i] ?? 0;
-                const on = isDrum ? stepState > 0 : (stepState && stepState.on);
-                return html`<${Step} key=${i} on=${on} isCurrent=${currentStep === i} index=${i} />`;
-            })}
+            ${renderedSteps}
         </div>
     `;
 };
@@ -196,6 +257,17 @@ const VelocityBar = ({ velocity }) => {
             <div
                 class="absolute bottom-0 left-0 w-full bg-indigo-400 rounded"
                 style=${{ height: `${velocity * 100}%`, pointerEvents: 'none' }}
+            ></div>
+        </div>
+    `;
+};
+
+const LengthBar = ({ length }) => {
+    return html`
+        <div class="relative w-full h-20 bg-gray-700 rounded cursor-pointer">
+            <div
+                class="absolute bottom-0 left-0 w-full bg-purple-400 rounded"
+                style=${{ height: `${length * 100}%`, pointerEvents: 'none' }}
             ></div>
         </div>
     `;
@@ -306,6 +378,79 @@ const VelocityGrid = ({ track }) => {
     `;
 };
 
+const LengthGrid = ({ track }) => {
+    const gridRef = useRef(null);
+    const [lengths, setLengths] = useState([]); // Initialize empty
+
+    useEffect(() => {
+        const updateLengths = () => {
+            const s = store.getState();
+            if (track === 'BASS_GLOBAL_LENGTH') {
+              setLengths(s.patterns[s.activePatternIndex].bassGlobalLength ?? Array(16).fill(0.125));
+            } else if (track === 'PAD_GLOBAL_LENGTH') {
+              setLengths(s.patterns[s.activePatternIndex].padGlobalLength ?? Array(16).fill(0.25));
+            } else if (track === 'LEAD_GLOBAL_LENGTH') {
+              setLengths(s.patterns[s.activePatternIndex].leadGlobalLength ?? Array(16).fill(0.125));
+            }
+        };
+        const unsub = store.subscribe((s, p) => {
+            if (track === 'BASS_GLOBAL_LENGTH') {
+              if (s.activePatternIndex !== p.activePatternIndex || 
+                  s.patterns[s.activePatternIndex]?.bassGlobalLength !== p.patterns[p.activePatternIndex]?.bassGlobalLength) {
+                  updateLengths();
+              }
+            } else if (track === 'PAD_GLOBAL_LENGTH') {
+              if (s.activePatternIndex !== p.activePatternIndex || 
+                  s.patterns[s.activePatternIndex]?.padGlobalLength !== p.patterns[p.activePatternIndex]?.padGlobalLength) {
+                  updateLengths();
+              }
+            } else if (track === 'LEAD_GLOBAL_LENGTH') {
+              if (s.activePatternIndex !== p.activePatternIndex || 
+                  s.patterns[s.activePatternIndex]?.leadGlobalLength !== p.patterns[p.activePatternIndex]?.leadGlobalLength) {
+                  updateLengths();
+              }
+            }
+        });
+        updateLengths(); // Initial call
+        return unsub;
+    }, [track]);
+
+    const lengthSteps = [1/16, 2/16, 4/16, 8/16, 16/16]; // 16th, 8th, 4th, half, whole
+
+    const handlePointerDown = (e) => {
+        if (!gridRef.current) return;
+        const rect = gridRef.current.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const stepWidth = rect.width / 16;
+        const index = Math.min(15, Math.max(0, Math.floor(x / stepWidth)));
+
+        const currentLength = lengths[index];
+        // Find the next length in the cycle
+        const currentIndex = lengthSteps.findIndex(l => Math.abs(l - currentLength) < 0.001);
+        const nextLength = currentIndex > -1 && currentIndex < lengthSteps.length - 1
+            ? lengthSteps[currentIndex + 1]
+            : lengthSteps[0];
+
+        if (track === 'BASS_GLOBAL_LENGTH') {
+          store.getState().setBassStepLength(index, nextLength);
+        } else if (track === 'PAD_GLOBAL_LENGTH') {
+          store.getState().setPadStepLength(index, nextLength);
+        } else if (track === 'LEAD_GLOBAL_LENGTH') {
+          store.getState().setLeadStepLength(index, nextLength);
+        }
+    };
+
+    return html`
+        <div
+            ref=${gridRef}
+            class="grid grid-cols-16 gap-0.5 touch-none"
+            onPointerDown=${handlePointerDown}
+        >
+            ${lengths.map((len, i) => html`<${LengthBar} key=${i} length=${len} />`)}
+        </div>
+    `;
+};
+
 const FilterGrid = ({ track }) => {
     const gridRef = useRef(null);
     const [filterValues, setFilterValues] = useState([]); // Initialize empty
@@ -405,7 +550,7 @@ const FilterGrid = ({ track }) => {
 };
 
 const BassVelocityEditor = ({ minOct, maxOct, paramConfig, params, paramSetter }) => {
-  const [activeMode, setActiveMode] = useState('Vel'); // 'Vel', 'Mix', or 'Filter'
+  const [activeMode, setActiveMode] = useState('Vel'); // 'Vel', 'Mix', 'Filter', or 'Len'
 
   return html`
     <div class="py-1 px-2">
@@ -414,15 +559,22 @@ const BassVelocityEditor = ({ minOct, maxOct, paramConfig, params, paramSetter }
           <${TabButton} label="Vel" active=${activeMode === 'Vel'} onClick=${() => setActiveMode('Vel')} />
         </div>
         <div class="grid grid-cols-1 gap-1">
-          <${TabButton} label="Mix" active=${activeMode === 'Mix'} onClick=${() => setActiveMode('Mix')} />
+          <${TabButton} label="Len" active=${activeMode === 'Len'} onClick=${() => setActiveMode('Len')} />
         </div>
         <div class="grid grid-cols-1 gap-1">
           <${TabButton} label="Filter" active=${activeMode === 'Filter'} onClick=${() => setActiveMode('Filter')} />
+        </div>
+        <div class="grid grid-cols-1 gap-1">
+          <${TabButton} label="Mix" active=${activeMode === 'Mix'} onClick=${() => setActiveMode('Mix')} />
         </div>
       </div>
 
       ${activeMode === 'Vel' && html`
         <${VelocityGrid} track="BASS_GLOBAL_VELOCITY" />
+      `}
+
+      ${activeMode === 'Len' && html`
+        <${LengthGrid} track="BASS_GLOBAL_LENGTH" />
       `}
 
       ${activeMode === 'Mix' && html`
@@ -441,7 +593,7 @@ const BassVelocityEditor = ({ minOct, maxOct, paramConfig, params, paramSetter }
 };
 
 const PadVelocityEditor = ({ minOct, maxOct, paramConfig, params, paramSetter }) => {
-  const [activeMode, setActiveMode] = useState('Vel'); // 'Vel', 'Mix', or 'Filter'
+  const [activeMode, setActiveMode] = useState('Vel'); // 'Vel', 'Mix', 'Filter', or 'Len'
 
   return html`
     <div class="py-1 px-2">
@@ -450,15 +602,22 @@ const PadVelocityEditor = ({ minOct, maxOct, paramConfig, params, paramSetter })
           <${TabButton} label="Vel" active=${activeMode === 'Vel'} onClick=${() => setActiveMode('Vel')} />
         </div>
         <div class="grid grid-cols-1 gap-1">
-          <${TabButton} label="Mix" active=${activeMode === 'Mix'} onClick=${() => setActiveMode('Mix')} />
+          <${TabButton} label="Len" active=${activeMode === 'Len'} onClick=${() => setActiveMode('Len')} />
         </div>
         <div class="grid grid-cols-1 gap-1">
           <${TabButton} label="Filter" active=${activeMode === 'Filter'} onClick=${() => setActiveMode('Filter')} />
+        </div>
+        <div class="grid grid-cols-1 gap-1">
+          <${TabButton} label="Mix" active=${activeMode === 'Mix'} onClick=${() => setActiveMode('Mix')} />
         </div>
       </div>
 
       ${activeMode === 'Vel' && html`
         <${VelocityGrid} track="PAD_GLOBAL_VELOCITY" />
+      `}
+
+      ${activeMode === 'Len' && html`
+        <${LengthGrid} track="PAD_GLOBAL_LENGTH" />
       `}
 
       ${activeMode === 'Mix' && html`
@@ -477,7 +636,7 @@ const PadVelocityEditor = ({ minOct, maxOct, paramConfig, params, paramSetter })
 };
 
 const LeadVelocityEditor = ({ minOct, maxOct, paramConfig, params, paramSetter }) => {
-  const [activeMode, setActiveMode] = useState('Vel'); // 'Vel', 'Mix', or 'Filter'
+  const [activeMode, setActiveMode] = useState('Vel'); // 'Vel', 'Mix', 'Filter', or 'Len'
 
   return html`
     <div class="py-1 px-2">
@@ -486,15 +645,22 @@ const LeadVelocityEditor = ({ minOct, maxOct, paramConfig, params, paramSetter }
           <${TabButton} label="Vel" active=${activeMode === 'Vel'} onClick=${() => setActiveMode('Vel')} />
         </div>
         <div class="grid grid-cols-1 gap-1">
-          <${TabButton} label="Mix" active=${activeMode === 'Mix'} onClick=${() => setActiveMode('Mix')} />
+          <${TabButton} label="Len" active=${activeMode === 'Len'} onClick=${() => setActiveMode('Len')} />
         </div>
         <div class="grid grid-cols-1 gap-1">
           <${TabButton} label="Filter" active=${activeMode === 'Filter'} onClick=${() => setActiveMode('Filter')} />
+        </div>
+        <div class="grid grid-cols-1 gap-1">
+          <${TabButton} label="Mix" active=${activeMode === 'Mix'} onClick=${() => setActiveMode('Mix')} />
         </div>
       </div>
 
       ${activeMode === 'Vel' && html`
         <${VelocityGrid} track="LEAD_GLOBAL_VELOCITY" />
+      `}
+
+      ${activeMode === 'Len' && html`
+        <${LengthGrid} track="LEAD_GLOBAL_LENGTH" />
       `}
 
       ${activeMode === 'Mix' && html`
@@ -906,15 +1072,96 @@ const PatternSelector = () => {
     `;
 };
 
+const SettingsModal = ({ isOpen, onClose }) => {
+  if (!isOpen) return null;
+
+  const swingSubdivision = useStoreState(s => s.swingSubdivision);
+  const { setSwingSubdivision, loadState } = store.getState();
+  const fileInputRef = useRef(null);
+
+  const handleSave = () => {
+    const state = store.getState();
+    const dataToSave = {};
+    savableStateKeys.forEach(key => {
+      dataToSave[key] = state[key];
+    });
+
+    const dataStr = JSON.stringify(dataToSave, null, 2);
+    const blob = new Blob([dataStr], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `groovebox-session-${Date.now()}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleLoadClick = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleFileSelected = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    if (!window.confirm('現在のセッションを上書きします。よろしいですか？')) {
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const savedState = JSON.parse(event.target.result);
+        loadState(savedState);
+        onClose(); // Close modal on successful load
+      } catch (err) {
+        console.error("Error loading or parsing file:", err);
+        alert("ファイルの読み込みに失敗しました。");
+      }
+    };
+    reader.readAsText(file);
+  };
+
+  return html`
+    <div class="fixed inset-0 bg-black bg-opacity-50 z-40 flex items-center justify-center" onClick=${onClose}>
+      <div class="bg-gray-800 rounded-lg shadow-xl p-4 w-full max-w-md m-4" onClick=${e => e.stopPropagation()}>
+        <h2 class="text-xl font-bold mb-4">設定</h2>
+        
+        <div class="mb-6">
+          <h3 class="text-lg font-semibold mb-2">スイング</h3>
+          <div class="flex gap-2">
+            <${TabButton} label="8th" active=${swingSubdivision === '8n'} onClick=${() => setSwingSubdivision('8n')} />
+            <${TabButton} label="16th" active=${swingSubdivision === '16n'} onClick=${() => setSwingSubdivision('16n')} />
+          </div>
+        </div>
+
+        <div class="mb-4">
+          <h3 class="text-lg font-semibold mb-2">セッション</h3>
+          <div class="flex gap-2">
+            <button class="py-2 px-4 text-sm rounded-lg w-full bg-green-600 hover:bg-green-500" onClick=${handleSave}>セーブ</button>
+            <button class="py-2 px-4 text-sm rounded-lg w-full bg-blue-600 hover:bg-blue-500" onClick=${handleLoadClick}>ロード</button>
+            <input type="file" accept=".json,application/json" style=${{ display: 'none' }} ref=${fileInputRef} onChange=${handleFileSelected} />
+          </div>
+        </div>
+
+        <div class="text-right">
+          <button class="py-2 px-4 text-sm rounded-lg bg-gray-600 hover:bg-gray-500" onClick=${onClose}>閉じる</button>
+        </div>
+      </div>
+    </div>
+  `;
+};
+
 const App = () => {
   const [active, setActive] = useState('DRUM');
-  const [bpm, setBpm] = useState(120);
-  const [swing, setSwing] = useState(0);
   const [masterVol, setMasterVol] = useState(0);
-  const isPlaying = useStoreState(s => s.isPlaying);
+  const [showSettings, setShowSettings] = useState(false);
 
-  useEffect(() => { Tone.Transport.bpm.rampTo(bpm, 0.1) }, [bpm]);
-  useEffect(() => { Tone.Transport.swing = swing }, [swing]);
+  const isPlaying = useStoreState(s => s.isPlaying);
+  const bpm = useStoreState(s => s.bpm);
+  const swing = useStoreState(s => s.swing);
+  const { setBpm, setSwing } = store.getState();
+
   useEffect(() => { Tone.Destination.volume.rampTo(masterVol, 0.1) }, [masterVol]);
 
   const togglePlayback = async () => {
@@ -932,6 +1179,7 @@ const App = () => {
 
   return html`
     <main class="p-1 max-w-3xl mx-auto font-sans">
+      <${SettingsModal} isOpen=${showSettings} onClose=${() => setShowSettings(false)} />
       <div class="bg-gray-800 rounded-lg">
         <header class="flex items-center gap-2 py-0.5 px-1">
           <button onClick=${togglePlayback} class="w-8 h-8 text-xl rounded-lg flex-shrink-0 flex items-center justify-center ${isPlaying ? 'bg-red-500' : 'bg-green-500'} hover:bg-opacity-80 transition-colors">
@@ -953,7 +1201,7 @@ const App = () => {
             <input type="range" min="0" max="0.8" step="0.01" value=${swing} onInput=${(e) => setSwing(e.target.valueAsNumber)} class="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer" />
           </div>
 
-          <button class="text-gray-400 hover:text-white flex-shrink-0">
+          <button onClick=${() => setShowSettings(true)} class="text-gray-400 hover:text-white flex-shrink-0">
             <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />

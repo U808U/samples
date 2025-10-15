@@ -15,17 +15,27 @@ const initialDrumVolumes = Object.fromEntries(
   Object.keys(drumTracks).map((t) => [t, 1])
 );
 
+// 保存する状態のキー
+export const savableStateKeys = [
+  'patterns', 'activePatternIndex', 'drumVolumes', 'bassParams', 'padParams',
+  'leadParams', 'bassActiveOctave', 'padActiveOctave', 'leadActiveOctave',
+  'bpm', 'swing', 'swingSubdivision'
+];
+
 // Zustandストア
 export const store = createStore((set, get) => ({
   patterns: Array(16).fill(null).map(() => ({
     stepsByTrack: {},
     bassFilterSteps: Array(16).fill(null).map(() => ({ on: false, value: 0.5 })),
-    bassGlobalVelocity: Array(16).fill(0.8), // Global velocity for bass
-    bassGlobalFilter: Array(16).fill(0.5), // Global filter for bass
-    padGlobalVelocity: Array(16).fill(0.8), // Global velocity for pad
+    bassGlobalVelocity: Array(16).fill(0.8),
+    bassGlobalFilter: Array(16).fill(0.5),
+    bassGlobalLength: Array(16).fill(0.125),
+    padGlobalVelocity: Array(16).fill(0.8),
     padGlobalFilter: Array(16).fill(0.5),
-    leadGlobalVelocity: Array(16).fill(0.8), // Global velocity for lead
-    leadGlobalFilter: Array(16).fill(0.5) // Global filter for lead
+    padGlobalLength: Array(16).fill(0.25),
+    leadGlobalVelocity: Array(16).fill(0.8),
+    leadGlobalFilter: Array(16).fill(0.5),
+    leadGlobalLength: Array(16).fill(0.125),
   })),
   activePatternIndex: 0,
   copiedPatternData: null,
@@ -37,9 +47,14 @@ export const store = createStore((set, get) => ({
   isPlaying: false,
   selectedDrumVelocityTrack: 'DRUM_BD',
   selectedBassNoteForVelocity: 'BASS_C1',
-  bassActiveOctave: 1, // Default bass octave for note entry
-  padActiveOctave: 3, // Default pad octave for note entry
-  leadActiveOctave: 4, // Default lead octave for note entry
+  bassActiveOctave: 1,
+  padActiveOctave: 3,
+  leadActiveOctave: 4,
+  
+  // Global transport settings
+  bpm: 120,
+  swing: 0,
+  swingSubdivision: '8n',
 
   // ベース用パラメータ
   bassParams: {
@@ -83,6 +98,21 @@ export const store = createStore((set, get) => ({
   setBassActiveOctave: (octave) => set({ bassActiveOctave: octave }),
   setPadActiveOctave: (octave) => set({ padActiveOctave: octave }),
   setLeadActiveOctave: (octave) => set({ leadActiveOctave: octave }),
+  setBpm: (bpm) => set({ bpm }),
+  setSwing: (swing) => set({ swing }),
+  setSwingSubdivision: (subdivision) => set({ swingSubdivision: subdivision }),
+
+  // Load state action
+  loadState: (savedState) => {
+    const newState = {};
+    for (const key of savableStateKeys) {
+      if (savedState.hasOwnProperty(key)) {
+        // Deep copy for nested objects to avoid reference issues
+        newState[key] = JSON.parse(JSON.stringify(savedState[key]));
+      }
+    }
+    set(newState);
+  },
 
   // Pattern actions
   setActivePatternIndex: (index) => set({ activePatternIndex: index }),
@@ -108,10 +138,13 @@ export const store = createStore((set, get) => ({
         bassFilterSteps: Array(16).fill(null).map(() => ({ on: false, value: 0.5 })),
         bassGlobalVelocity: Array(16).fill(0.8),
         bassGlobalFilter: Array(16).fill(0.5),
+        bassGlobalLength: Array(16).fill(0.125),
         padGlobalVelocity: Array(16).fill(0.8),
         padGlobalFilter: Array(16).fill(0.5),
+        padGlobalLength: Array(16).fill(0.25),
         leadGlobalVelocity: Array(16).fill(0.8),
-        leadGlobalFilter: Array(16).fill(0.5)
+        leadGlobalFilter: Array(16).fill(0.5),
+        leadGlobalLength: Array(16).fill(0.125),
       };
       return { patterns: newPatterns };
     });
@@ -163,6 +196,42 @@ export const store = createStore((set, get) => ({
       newLeadGlobalVelocity[stepIndex] = velocity;
 
       const newCurrentPattern = { ...currentPattern, leadGlobalVelocity: newLeadGlobalVelocity };
+      const newPatterns = [...s.patterns];
+      newPatterns[s.activePatternIndex] = newCurrentPattern;
+      return { patterns: newPatterns };
+    }),
+
+  setBassStepLength: (stepIndex, length) =>
+    set((s) => {
+      const currentPattern = s.patterns[s.activePatternIndex];
+      const newBassGlobalLength = [...currentPattern.bassGlobalLength];
+      newBassGlobalLength[stepIndex] = length;
+
+      const newCurrentPattern = { ...currentPattern, bassGlobalLength: newBassGlobalLength };
+      const newPatterns = [...s.patterns];
+      newPatterns[s.activePatternIndex] = newCurrentPattern;
+      return { patterns: newPatterns };
+    }),
+
+  setPadStepLength: (stepIndex, length) =>
+    set((s) => {
+      const currentPattern = s.patterns[s.activePatternIndex];
+      const newPadGlobalLength = [...currentPattern.padGlobalLength];
+      newPadGlobalLength[stepIndex] = length;
+
+      const newCurrentPattern = { ...currentPattern, padGlobalLength: newPadGlobalLength };
+      const newPatterns = [...s.patterns];
+      newPatterns[s.activePatternIndex] = newCurrentPattern;
+      return { patterns: newPatterns };
+    }),
+
+  setLeadStepLength: (stepIndex, length) =>
+    set((s) => {
+      const currentPattern = s.patterns[s.activePatternIndex];
+      const newLeadGlobalLength = [...currentPattern.leadGlobalLength];
+      newLeadGlobalLength[stepIndex] = length;
+
+      const newCurrentPattern = { ...currentPattern, leadGlobalLength: newLeadGlobalLength };
       const newPatterns = [...s.patterns];
       newPatterns[s.activePatternIndex] = newCurrentPattern;
       return { patterns: newPatterns };
@@ -231,6 +300,22 @@ export const store = createStore((set, get) => ({
             newValue = (currentValue > 0) ? 0 : 0.8; // Toggle drum velocity
         } else if (isBass || isPad || isLead) { // NEW: Handle BASS, PAD, LEAD as objects
             const currentStepObj = newTrackSteps[globalIndex] ?? {on: false, velocity: 0};
+            
+            // Polyphony handling for Pad
+            if (isPad && !currentStepObj.on) { // Only check when turning a note ON
+                const padOctave = s.padActiveOctave;
+                let activePadNotes = 0;
+                noteNames.forEach((n) => {
+                    const padTrack = `PAD_${n}${padOctave}`;
+                    if (newStepsByTrack[padTrack]?.[globalIndex]?.on) {
+                        activePadNotes++;
+                    }
+                });
+                if (activePadNotes >= 4) {
+                    return { patterns: s.patterns }; // Return original state, effectively cancelling the update
+                }
+            }
+
             newValue = {
                 on: !currentStepObj.on, // Toggle on/off
                 velocity: currentStepObj.on ? 0 : (currentStepObj.velocity > 0 ? currentStepObj.velocity : 0.8) // If turning on, use existing velocity or default 0.8

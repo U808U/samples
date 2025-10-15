@@ -74,12 +74,45 @@ store.subscribe(
   (s) => {
     const p = s.padParams;
     padSynth.volume.value = Tone.gainToDb(p.volume);
-    padFilter.baseFrequency = p.filterFreq; // .value を削除
+    padFilter.baseFrequency = p.filterFreq;
     padFilter.frequency.value = p.filterSpeed;
     padSynth.set({ envelope: { attack: p.envelope } });
   },
   (s) => s.padParams
 );
+
+// Transport settings subscriptions
+store.subscribe(
+  (bpm) => { 
+    if (typeof bpm === 'number' && !isNaN(bpm)) {
+      Tone.Transport.bpm.rampTo(bpm, 0.1);
+    }
+  },
+  (s) => s.bpm
+);
+store.subscribe(
+  (swing) => { 
+    if (typeof swing === 'number' && !isNaN(swing)) {
+      Tone.Transport.swing = swing; 
+    }
+  },
+  (s) => s.swing
+);
+store.subscribe(
+  (subdivision) => { 
+    if (subdivision) {
+      Tone.Transport.swingSubdivision = subdivision; 
+    }
+  },
+  (s) => s.swingSubdivision
+);
+
+
+const stepsToTime = (steps) => {
+  if (steps <= 0) return '32n';
+  const time = 16 / steps;
+  return `${time}n`;
+};
 
 // Transportループ：16nごとにステップ算出・UI更新・音発火
 const stepTicks = Tone.Time('16n').toTicks();
@@ -109,16 +142,18 @@ Tone.Transport.scheduleRepeat((time) => {
       const stepObj = seq[sixteenthStep];
       if (stepObj && stepObj.on) {
         const note = track.split('_')[1];
-        const p = state.bassParams;
         const globalVelocity = state.patterns[state.activePatternIndex].bassGlobalVelocity[sixteenthStep] ?? 0.8;
         const filterValue = state.patterns[state.activePatternIndex].bassGlobalFilter[sixteenthStep] ?? 0.5;
+        const lengthValue = state.patterns[state.activePatternIndex].bassGlobalLength[sixteenthStep] ?? 0.125;
+        const lengthInSteps = Math.round(lengthValue * 16);
+        const noteLength = stepsToTime(lengthInSteps);
         const minFilterFreq = 40;
         const maxFilterFreq = 10000;
         const nonLinearFilterValue = Math.pow(filterValue, 4);
         const mappedFilterFreq = minFilterFreq + (nonLinearFilterValue * (maxFilterFreq - minFilterFreq));
         
         bassSynth.filterEnvelope.baseFrequency = mappedFilterFreq;
-        bassSynth.triggerAttackRelease(note, p.length, time, globalVelocity);
+        bassSynth.triggerAttackRelease(note, noteLength, time, globalVelocity);
       }
     }
     // PAD
@@ -126,8 +161,10 @@ Tone.Transport.scheduleRepeat((time) => {
       const stepObj = seq[sixteenthStep];
       if (stepObj && stepObj.on) {
         const note = track.split('_')[1];
-        const p = state.padParams;
-        padSynth.triggerAttackRelease(note, p.length, time, stepObj.velocity);
+        const lengthValue = state.patterns[state.activePatternIndex].padGlobalLength[sixteenthStep] ?? 0.25;
+        const lengthInSteps = Math.round(lengthValue * 16);
+        const noteLength = stepsToTime(lengthInSteps);
+        padSynth.triggerAttackRelease(note, noteLength, time, stepObj.velocity);
       }
     }
     // LEAD
@@ -135,16 +172,18 @@ Tone.Transport.scheduleRepeat((time) => {
       const stepObj = seq[sixteenthStep];
       if (stepObj && stepObj.on) {
         const note = track.split('_')[1];
-        const p = state.leadParams;
         const globalVelocity = state.patterns[state.activePatternIndex].leadGlobalVelocity[sixteenthStep] ?? 0.8;
         const filterValue = state.patterns[state.activePatternIndex].leadGlobalFilter[sixteenthStep] ?? 0.5;
+        const lengthValue = state.patterns[state.activePatternIndex].leadGlobalLength[sixteenthStep] ?? 0.125;
+        const lengthInSteps = Math.round(lengthValue * 16);
+        const noteLength = stepsToTime(lengthInSteps);
         const minFilterFreq = 40;
         const maxFilterFreq = 10000;
         const nonLinearFilterValue = Math.pow(filterValue, 4);
         const mappedFilterFreq = minFilterFreq + (nonLinearFilterValue * (maxFilterFreq - minFilterFreq));
 
         leadSynth.filterEnvelope.baseFrequency = mappedFilterFreq;
-        leadSynth.triggerAttackRelease(note, p.length, time, globalVelocity);
+        leadSynth.triggerAttackRelease(note, noteLength, time, globalVelocity);
       }
     }
   });
