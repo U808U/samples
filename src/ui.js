@@ -262,12 +262,12 @@ const VelocityBar = ({ velocity }) => {
     `;
 };
 
-const LengthBar = ({ length }) => {
+const LengthBar = ({ displayValue }) => {
     return html`
         <div class="relative w-full h-20 bg-gray-700 rounded cursor-pointer">
             <div
                 class="absolute bottom-0 left-0 w-full bg-purple-400 rounded"
-                style=${{ height: `${length * 100}%`, pointerEvents: 'none' }}
+                style=${{ height: `${displayValue * 100}%`, pointerEvents: 'none' }}
             ></div>
         </div>
     `;
@@ -332,8 +332,7 @@ const VelocityGrid = ({ track }) => {
 
         if (x < 0 || x > rect.width || y < 0 || y > rect.height) return;
 
-        const stepWidth = rect.width / 16;
-        const index = Math.min(15, Math.max(0, Math.floor(x / stepWidth))); // Clamp index to 0-15
+        const index = Math.min(15, Math.floor((x / rect.width) * 16));
         const velocity = Math.max(0, Math.min(1, 1 - y / rect.height));
 
         if (velocities[index] !== velocity) {
@@ -378,6 +377,9 @@ const VelocityGrid = ({ track }) => {
     `;
 };
 
+const lengthValueMap = [0.03125, 0.0625, 0.125, 0.25, 0.5, 1.0]; // 32nd, 16th, 8th, 4th, half, whole
+const lengthDisplayMap = [1/6, 2/6, 3/6, 4/6, 5/6, 1.0];
+
 const LengthGrid = ({ track }) => {
     const gridRef = useRef(null);
     const [lengths, setLengths] = useState([]); // Initialize empty
@@ -386,11 +388,11 @@ const LengthGrid = ({ track }) => {
         const updateLengths = () => {
             const s = store.getState();
             if (track === 'BASS_GLOBAL_LENGTH') {
-              setLengths(s.patterns[s.activePatternIndex].bassGlobalLength ?? Array(16).fill(0.125));
+              setLengths(s.patterns[s.activePatternIndex].bassGlobalLength ?? Array(16).fill(0.0625));
             } else if (track === 'PAD_GLOBAL_LENGTH') {
-              setLengths(s.patterns[s.activePatternIndex].padGlobalLength ?? Array(16).fill(0.25));
+              setLengths(s.patterns[s.activePatternIndex].padGlobalLength ?? Array(16).fill(0.0625));
             } else if (track === 'LEAD_GLOBAL_LENGTH') {
-              setLengths(s.patterns[s.activePatternIndex].leadGlobalLength ?? Array(16).fill(0.125));
+              setLengths(s.patterns[s.activePatternIndex].leadGlobalLength ?? Array(16).fill(0.0625));
             }
         };
         const unsub = store.subscribe((s, p) => {
@@ -415,29 +417,46 @@ const LengthGrid = ({ track }) => {
         return unsub;
     }, [track]);
 
-    const lengthSteps = [1/16, 2/16, 4/16, 8/16, 16/16]; // 16th, 8th, 4th, half, whole
-
-    const handlePointerDown = (e) => {
+    const updateLengthFromEvent = (e) => {
         if (!gridRef.current) return;
         const rect = gridRef.current.getBoundingClientRect();
         const x = e.clientX - rect.left;
-        const stepWidth = rect.width / 16;
-        const index = Math.min(15, Math.max(0, Math.floor(x / stepWidth)));
+        const y = e.clientY - rect.top;
 
-        const currentLength = lengths[index];
-        // Find the next length in the cycle
-        const currentIndex = lengthSteps.findIndex(l => Math.abs(l - currentLength) < 0.001);
-        const nextLength = currentIndex > -1 && currentIndex < lengthSteps.length - 1
-            ? lengthSteps[currentIndex + 1]
-            : lengthSteps[0];
+        if (x < 0 || x > rect.width || y < 0 || y > rect.height) return;
 
-        if (track === 'BASS_GLOBAL_LENGTH') {
-          store.getState().setBassStepLength(index, nextLength);
-        } else if (track === 'PAD_GLOBAL_LENGTH') {
-          store.getState().setPadStepLength(index, nextLength);
-        } else if (track === 'LEAD_GLOBAL_LENGTH') {
-          store.getState().setLeadStepLength(index, nextLength);
+        const index = Math.min(15, Math.floor((x / rect.width) * 16));
+        const rawValue = Math.max(0, Math.min(1, 1 - y / rect.height));
+        const stepIndex = Math.min(lengthValueMap.length - 1, Math.floor(rawValue * lengthValueMap.length));
+        const newLength = lengthValueMap[stepIndex];
+
+        if (lengths[index] !== newLength) {
+            if (track === 'BASS_GLOBAL_LENGTH') {
+              store.getState().setBassStepLength(index, newLength);
+            } else if (track === 'PAD_GLOBAL_LENGTH') {
+              store.getState().setPadStepLength(index, newLength);
+            } else if (track === 'LEAD_GLOBAL_LENGTH') {
+              store.getState().setLeadStepLength(index, newLength);
+            }
         }
+    };
+
+    const handlePointerDown = (e) => {
+        store.getState().setDrawing(true);
+        updateLengthFromEvent(e);
+
+        const handlePointerMove = (moveEvent) => {
+            updateLengthFromEvent(moveEvent);
+        };
+
+        const handlePointerUp = () => {
+            store.getState().setDrawing(false);
+            window.removeEventListener('pointermove', handlePointerMove);
+            window.removeEventListener('pointerup', handlePointerUp);
+        };
+
+        window.addEventListener('pointermove', handlePointerMove);
+        window.addEventListener('pointerup', handlePointerUp);
     };
 
     return html`
@@ -446,7 +465,11 @@ const LengthGrid = ({ track }) => {
             class="grid grid-cols-16 gap-0.5 touch-none"
             onPointerDown=${handlePointerDown}
         >
-            ${lengths.map((len, i) => html`<${LengthBar} key=${i} length=${len} />`)}
+            ${lengths.map((len, i) => {
+                const valueIndex = lengthValueMap.indexOf(len);
+                const displayValue = (valueIndex >= 0) ? lengthDisplayMap[valueIndex] : 0;
+                return html`<${LengthBar} key=${i} displayValue=${displayValue} />`
+            })}
         </div>
     `;
 };
@@ -1104,7 +1127,7 @@ const SettingsModal = ({ isOpen, onClose }) => {
     const file = e.target.files[0];
     if (!file) return;
 
-    if (!window.confirm('現在のセッションを上書きします。よろしいですか？')) {
+    if (!window.confirm('This will overwrite the current session. Are you sure?')) {
       return;
     }
 
@@ -1116,7 +1139,7 @@ const SettingsModal = ({ isOpen, onClose }) => {
         onClose(); // Close modal on successful load
       } catch (err) {
         console.error("Error loading or parsing file:", err);
-        alert("ファイルの読み込みに失敗しました。");
+        alert("Failed to load or parse the file.");
       }
     };
     reader.readAsText(file);
@@ -1125,10 +1148,10 @@ const SettingsModal = ({ isOpen, onClose }) => {
   return html`
     <div class="fixed inset-0 bg-black bg-opacity-50 z-40 flex items-center justify-center" onClick=${onClose}>
       <div class="bg-gray-800 rounded-lg shadow-xl p-4 w-full max-w-md m-4" onClick=${e => e.stopPropagation()}>
-        <h2 class="text-xl font-bold mb-4">設定</h2>
+        <h2 class="text-xl font-bold mb-4">Settings</h2>
         
         <div class="mb-6">
-          <h3 class="text-lg font-semibold mb-2">スイング</h3>
+          <h3 class="text-lg font-semibold mb-2">Swing</h3>
           <div class="flex gap-2">
             <${TabButton} label="8th" active=${swingSubdivision === '8n'} onClick=${() => setSwingSubdivision('8n')} />
             <${TabButton} label="16th" active=${swingSubdivision === '16n'} onClick=${() => setSwingSubdivision('16n')} />
@@ -1136,16 +1159,16 @@ const SettingsModal = ({ isOpen, onClose }) => {
         </div>
 
         <div class="mb-4">
-          <h3 class="text-lg font-semibold mb-2">セッション</h3>
+          <h3 class="text-lg font-semibold mb-2">Session</h3>
           <div class="flex gap-2">
-            <button class="py-2 px-4 text-sm rounded-lg w-full bg-green-600 hover:bg-green-500" onClick=${handleSave}>セーブ</button>
-            <button class="py-2 px-4 text-sm rounded-lg w-full bg-blue-600 hover:bg-blue-500" onClick=${handleLoadClick}>ロード</button>
+            <button class="py-2 px-4 text-sm rounded-lg w-full bg-green-600 hover:bg-green-500" onClick=${handleSave}>Save</button>
+            <button class="py-2 px-4 text-sm rounded-lg w-full bg-blue-600 hover:bg-blue-500" onClick=${handleLoadClick}>Load</button>
             <input type="file" accept=".json,application/json" style=${{ display: 'none' }} ref=${fileInputRef} onChange=${handleFileSelected} />
           </div>
         </div>
 
         <div class="text-right">
-          <button class="py-2 px-4 text-sm rounded-lg bg-gray-600 hover:bg-gray-500" onClick=${onClose}>閉じる</button>
+          <button class="py-2 px-4 text-sm rounded-lg bg-gray-600 hover:bg-gray-500" onClick=${onClose}>Close</button>
         </div>
       </div>
     </div>
@@ -1156,11 +1179,30 @@ const App = () => {
   const [active, setActive] = useState('DRUM');
   const [masterVol, setMasterVol] = useState(0);
   const [showSettings, setShowSettings] = useState(false);
-
   const isPlaying = useStoreState(s => s.isPlaying);
+
   const bpm = useStoreState(s => s.bpm);
   const swing = useStoreState(s => s.swing);
+  const swingSubdivision = useStoreState(s => s.swingSubdivision);
   const { setBpm, setSwing } = store.getState();
+
+  useEffect(() => {
+    if (typeof bpm === 'number' && !isNaN(bpm)) {
+      Tone.Transport.bpm.rampTo(bpm, 0.1);
+    }
+  }, [bpm]);
+
+  useEffect(() => {
+    if (typeof swing === 'number' && !isNaN(swing)) {
+      Tone.Transport.swing = swing;
+    }
+  }, [swing]);
+
+  useEffect(() => {
+    if (swingSubdivision) {
+      Tone.Transport.swingSubdivision = swingSubdivision;
+    }
+  }, [swingSubdivision]);
 
   useEffect(() => { Tone.Destination.volume.rampTo(masterVol, 0.1) }, [masterVol]);
 

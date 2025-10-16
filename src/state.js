@@ -1,4 +1,5 @@
-import { createStore } from 'https://esm.sh/zustand@4.4.0?module';
+import { createStore } from 'https://cdn.skypack.dev/zustand';
+import { subscribeWithSelector } from 'https://cdn.skypack.dev/zustand/middleware';
 
 // 音階リスト
 export const noteNames = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'].reverse();
@@ -23,19 +24,19 @@ export const savableStateKeys = [
 ];
 
 // Zustandストア
-export const store = createStore((set, get) => ({
+export const store = createStore(subscribeWithSelector((set, get) => ({
   patterns: Array(16).fill(null).map(() => ({
     stepsByTrack: {},
     bassFilterSteps: Array(16).fill(null).map(() => ({ on: false, value: 0.5 })),
     bassGlobalVelocity: Array(16).fill(0.8),
     bassGlobalFilter: Array(16).fill(0.5),
-    bassGlobalLength: Array(16).fill(0.125),
+    bassGlobalLength: Array(16).fill(0.0625),
     padGlobalVelocity: Array(16).fill(0.8),
     padGlobalFilter: Array(16).fill(0.5),
-    padGlobalLength: Array(16).fill(0.25),
+    padGlobalLength: Array(16).fill(0.0625),
     leadGlobalVelocity: Array(16).fill(0.8),
     leadGlobalFilter: Array(16).fill(0.5),
-    leadGlobalLength: Array(16).fill(0.125),
+    leadGlobalLength: Array(16).fill(0.0625),
   })),
   activePatternIndex: 0,
   copiedPatternData: null,
@@ -138,13 +139,13 @@ export const store = createStore((set, get) => ({
         bassFilterSteps: Array(16).fill(null).map(() => ({ on: false, value: 0.5 })),
         bassGlobalVelocity: Array(16).fill(0.8),
         bassGlobalFilter: Array(16).fill(0.5),
-        bassGlobalLength: Array(16).fill(0.125),
+        bassGlobalLength: Array(16).fill(0.0625),
         padGlobalVelocity: Array(16).fill(0.8),
         padGlobalFilter: Array(16).fill(0.5),
-        padGlobalLength: Array(16).fill(0.25),
+        padGlobalLength: Array(16).fill(0.0625),
         leadGlobalVelocity: Array(16).fill(0.8),
         leadGlobalFilter: Array(16).fill(0.5),
-        leadGlobalLength: Array(16).fill(0.125),
+        leadGlobalLength: Array(16).fill(0.0625),
       };
       return { patterns: newPatterns };
     });
@@ -352,4 +353,4 @@ export const store = createStore((set, get) => ({
         newPatterns[s.activePatternIndex] = newCurrentPattern;
         return { patterns: newPatterns };
     }),
-}));
+})));

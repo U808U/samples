@@ -2,18 +2,24 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
   <title>Groovebox</title>
+
+  <link rel="manifest" href="/manifest.json">
+  <meta name="theme-color" content="#2d3748">
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/15.3.5/Tone.min.js"></script>
   
   <style>
-    html, body {
+    html {
+      -webkit-text-size-adjust: 100%;
+      touch-action: manipulation;
+    }
+    body {
       margin: 0;
       background-color: #1f2937; /* bg-gray-800 */
       color: #e5e7eb; /* text-gray-200 */
       overflow: hidden;
-      touch-action: none;
       overscroll-behavior: none;
     }
     /* Safariの自動ズームを防止 */
@@ -24,5 +30,16 @@
 </head>
 <body>
   <script type="module" src="./src/ui.js"></script>
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/sw.js').then(registration => {
+          console.log('ServiceWorker registration successful with scope: ', registration.scope);
+        }, err => {
+          console.log('ServiceWorker registration failed: ', err);
+        });
+      });
+    }
+  </script>
 </body>
 </html>

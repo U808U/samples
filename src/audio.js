@@ -81,33 +81,6 @@ store.subscribe(
   (s) => s.padParams
 );
 
-// Transport settings subscriptions
-store.subscribe(
-  (bpm) => { 
-    if (typeof bpm === 'number' && !isNaN(bpm)) {
-      Tone.Transport.bpm.rampTo(bpm, 0.1);
-    }
-  },
-  (s) => s.bpm
-);
-store.subscribe(
-  (swing) => { 
-    if (typeof swing === 'number' && !isNaN(swing)) {
-      Tone.Transport.swing = swing; 
-    }
-  },
-  (s) => s.swing
-);
-store.subscribe(
-  (subdivision) => { 
-    if (subdivision) {
-      Tone.Transport.swingSubdivision = subdivision; 
-    }
-  },
-  (s) => s.swingSubdivision
-);
-
-
 const stepsToTime = (steps) => {
   if (steps <= 0) return '32n';
   const time = 16 / steps;
